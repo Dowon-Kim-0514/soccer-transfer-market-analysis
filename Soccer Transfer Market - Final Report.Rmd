@@ -1,0 +1,1056 @@
+---
+title: "Soccer Transfer Market - Final Report"
+author: "Dowon Kim"
+date: "2026-05-28"
+output: pdf_document
+geometry: margin=1in
+header-includes:
+  - \usepackage{hyperref}
+  - \usepackage{longtable}
+  - \usepackage{booktabs}
+  - \usepackage{float}
+  - \usepackage{graphicx}
+  - \setlength{\emergencystretch}{3em}
+  - \sloppy
+  - \AtBeginDocument{\urlstyle{same}}
+  - \AtBeginDocument{\def\UrlBreaks{\do\/\do-\do\_}}
+  - \AtBeginDocument{\Urlmuskip=0mu plus 1mu\relax}
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(patchwork)
+
+opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  out.width = "100%"
+)
+
+project_root <- "/Users/dowonkim/Desktop/Ucla /Stats/2026 3Spring/project/personal/coding"
+data_dir <- file.path(project_root, "data")
+ml_dir <- file.path(data_dir, "ML model")
+step9_fig_dir <- file.path(ml_dir, "Step9_figures")
+step10_fig_dir <- file.path(ml_dir, "Step10_figures")
+eda_dir <- file.path(project_root, "EDA 그래프")
+
+include_graph_folder <- function(graph_no) {
+  folder <- file.path(eda_dir, paste0("그래프 ", graph_no))
+  files <- sort(list.files(folder, pattern = "\\.png$", full.names = TRUE))
+  if (length(files) == 0) {
+    cat(paste0("No PNG files found in ", folder))
+  } else {
+    knitr::include_graphics(files)
+  }
+}
+
+small_kable <- function(df, caption_text, digits_num = 3, font_size_num = 8) {
+  out <- knitr::kable(
+    df,
+    format = "latex",
+    booktabs = TRUE,
+    longtable = TRUE,
+    digits = digits_num,
+    caption = caption_text,
+    linesep = ""
+  )
+  knitr::asis_output(
+    paste0(
+      "\\begingroup\\fontsize{", font_size_num, "}{", font_size_num + 2, "}\\selectfont\n",
+      out,
+      "\n\\endgroup\n"
+    )
+  )
+}
+
+wide_kable <- function(df, caption_text, digits_num = 3, font_size_num = 7) {
+  out <- knitr::kable(
+    df,
+    format = "latex",
+    booktabs = TRUE,
+    longtable = FALSE,
+    digits = digits_num,
+    caption = caption_text,
+    linesep = ""
+  )
+  out <- sub(
+    "\\\\begin\\{table\\}",
+    "\\\\begin{table}[H]",
+    out
+  )
+  out <- sub(
+    "\\\\begin\\{tabular\\}",
+    "\\\\resizebox{\\\\linewidth}{!}{%\n\\\\begin{tabular}",
+    out
+  )
+  out <- sub(
+    "\\\\end\\{tabular\\}",
+    "\\\\end{tabular}%\n}",
+    out
+  )
+  knitr::asis_output(
+    paste0(
+      "\\begingroup\\fontsize{", font_size_num, "}{", font_size_num + 2, "}\\selectfont\n",
+      "\\setlength{\\tabcolsep}{3pt}\n",
+      out,
+      "\n\\endgroup\n"
+    )
+  )
+}
+
+custom_kable <- function(df, caption_text, align_vec, digits_num = 3, font_size_num = 6) {
+  out <- knitr::kable(
+    df,
+    format = "latex",
+    booktabs = TRUE,
+    longtable = FALSE,
+    digits = digits_num,
+    caption = caption_text,
+    align = align_vec,
+    linesep = ""
+  )
+  out <- sub(
+    "\\\\begin\\{table\\}",
+    "\\\\begin{table}[H]",
+    out
+  )
+  out <- sub(
+    "\\\\begin\\{tabular\\}",
+    "\\\\resizebox{\\\\linewidth}{!}{%\n\\\\begin{tabular}",
+    out
+  )
+  out <- sub(
+    "\\\\end\\{tabular\\}",
+    "\\\\end{tabular}%\n}",
+    out
+  )
+  knitr::asis_output(
+    paste0(
+      "\\begingroup\\fontsize{", font_size_num, "}{", font_size_num + 2, "}\\selectfont\n",
+      "\\setlength{\\tabcolsep}{3pt}\n",
+      out,
+      "\n\\endgroup\n"
+    )
+  )
+}
+
+model1_metrics <- read_csv(file.path(ml_dir, "model1_metrics.csv"), show_col_types = FALSE)
+model2_metrics <- read_csv(file.path(ml_dir, "model2_metrics.csv"), show_col_types = FALSE)
+model3_metrics <- read_csv(file.path(ml_dir, "model3_metrics.csv"), show_col_types = FALSE)
+model4_metrics <- read_csv(file.path(ml_dir, "model4_metrics.csv"), show_col_types = FALSE)
+
+model4_selected <- read_csv(file.path(ml_dir, "model4_selected_candidates.csv"), show_col_types = FALSE)
+model4_vif <- read_csv(file.path(ml_dir, "model4_candidate_vif.csv"), show_col_types = FALSE)
+model4_aicbic <- read_csv(file.path(ml_dir, "model4_aic_bic_history.csv"), show_col_types = FALSE)
+
+clean_data <- read_csv(file.path(data_dir, "clean_data.csv"), show_col_types = FALSE)
+importance_summary <- read_csv(file.path(ml_dir, "model4_feature_importance_summary.csv"), show_col_types = FALSE)
+results_test <- read_csv(file.path(ml_dir, "results_test_282.csv"), show_col_types = FALSE)
+results_all <- read_csv(file.path(ml_dir, "results_all_1407_enriched.csv"), show_col_types = FALSE)
+
+step9_overall <- read_csv(file.path(ml_dir, "step9_overall_residual_summary.csv"), show_col_types = FALSE)
+step9_position <- read_csv(file.path(ml_dir, "step9_position_residual_summary.csv"), show_col_types = FALSE)
+step9_to_league <- read_csv(file.path(ml_dir, "step9_to_league_residual_summary.csv"), show_col_types = FALSE)
+step9_from_league <- read_csv(file.path(ml_dir, "step9_from_league_residual_summary.csv"), show_col_types = FALSE)
+step9_u21 <- read_csv(file.path(ml_dir, "step9_u21_premium_summary.csv"), show_col_types = FALSE)
+step9_corr <- read_csv(file.path(ml_dir, "step9_residual_correlation_summary.csv"), show_col_types = FALSE)
+
+step10_season <- read_csv(file.path(ml_dir, "step10_season_test_performance.csv"), show_col_types = FALSE)
+step10_peak <- read_csv(file.path(ml_dir, "step10_peak_age_summary.csv"), show_col_types = FALSE)
+step10_age_empirical <- read_csv(file.path(ml_dir, "step10_empirical_age_summary.csv"), show_col_types = FALSE)
+
+extract_metrics <- function(df, model_name) {
+  tibble(
+    model = model_name,
+    train_n = df$value[df$metric == "train_n"],
+    test_n = df$value[df$metric == "test_n"],
+    cv_r2_mean = df$value[df$metric == "cv_r2_mean"],
+    cv_r2_sd = df$value[df$metric == "cv_r2_sd"],
+    cv_rmse_mean = df$value[df$metric == "cv_rmse_mean"],
+    cv_rmse_sd = df$value[df$metric == "cv_rmse_sd"],
+    test_r2 = df$value[df$metric == "test_r2"],
+    test_rmse = df$value[df$metric == "test_rmse"]
+  )
+}
+
+model_compare <- bind_rows(
+  extract_metrics(model1_metrics, "Model 1"),
+  extract_metrics(model2_metrics, "Model 2"),
+  extract_metrics(model3_metrics, "Model 3"),
+  extract_metrics(model4_metrics, "Model 4")
+)
+
+top_importance <- importance_summary %>%
+  mutate(abs_std = abs(standardized_coefficient)) %>%
+  arrange(desc(abs_std)) %>%
+  select(feature, standardized_coefficient, abs_std, rf_perm_importance_mean, xgb_perm_importance_mean) %>%
+  slice_head(n = 15)
+
+top_std <- importance_summary %>%
+  select(feature, abs_standardized_coefficient) %>%
+  arrange(desc(abs_standardized_coefficient)) %>%
+  slice_head(n = 10)
+
+top_rf <- importance_summary %>%
+  select(feature, rf_perm_importance_mean, rf_perm_importance_sd) %>%
+  arrange(desc(rf_perm_importance_mean)) %>%
+  slice_head(n = 10)
+
+top_xgb <- importance_summary %>%
+  select(feature, xgb_perm_importance_mean, xgb_perm_importance_sd) %>%
+  arrange(desc(xgb_perm_importance_mean)) %>%
+  slice_head(n = 10)
+
+recov_importance <- importance_summary %>%
+  filter(feature == "Recov_per90")
+
+top_overpriced <- results_test %>%
+  arrange(desc(residual)) %>%
+  select(player_name, transfer_season, to_club_name_full, residual, pct_gap_percent) %>%
+  slice_head(n = 10)
+
+top_underpriced <- results_test %>%
+  arrange(residual) %>%
+  select(player_name, transfer_season, to_club_name_full, residual, pct_gap_percent) %>%
+  slice_head(n = 10)
+
+league_labels <- c(
+  "GB1" = "Premier League",
+  "ES1" = "La Liga",
+  "L1"  = "Bundesliga",
+  "IT1" = "Serie A",
+  "FR1" = "Ligue 1"
+)
+
+clean_data <- clean_data %>%
+  mutate(
+    to_league_label = recode(to_league, !!!league_labels),
+    from_league_label = recode(from_league, !!!league_labels),
+    U21_label = if_else(U21_dummy == 1, "U21 (Youth)", "General"),
+    O30_label = if_else(O30_dummy == 1, "O30 (Veteran)", "Under 30")
+  )
+
+areola_case <- results_all %>%
+  filter(player_name == "Alphonse Areola") %>%
+  slice(1)
+
+league_xg_slopes <- clean_data %>%
+  filter(
+    to_league %in% names(league_labels),
+    !is.na(log_transfer_fee),
+    !is.na(xG_Per)
+  ) %>%
+  group_by(to_league_label) %>%
+  group_modify(~{
+    fit <- lm(log_transfer_fee ~ xG_Per, data = .x)
+    s <- coef(summary(fit))
+    est <- s["xG_Per", "Estimate"]
+    se  <- s["xG_Per", "Std. Error"]
+    p   <- s["xG_Per", "Pr(>|t|)"]
+    tibble(
+      n = nrow(.x),
+      xg_coef = est,
+      xg_se = se,
+      xg_p = p,
+      ci_low = est - 1.96 * se,
+      ci_high = est + 1.96 * se
+    )
+  }) %>%
+  ungroup() %>%
+  arrange(desc(xg_coef))
+```
+
+# Abstract
+
+This report investigates whether football transfer fees can be predicted from a combination of structural market variables, traditional performance indicators, and advanced performance indicators. The project proceeds in four stages: exploratory data analysis, sequential model building, residual diagnostics, and stability checks by season and age. Four candidate models are estimated. The final combined specification, Model 4, delivers the strongest held-out performance, with a test R-squared of 0.468 and a test RMSE of 0.926 on log transfer fees. The results show that traditional metrics outperform advanced metrics when used alone, but selected advanced indicators materially improve predictive performance when added to a broader combined model. Residual analysis suggests that the final model is well-centered overall, with only modest position- and league-level differences remaining. The final interpretation is that the transfer market rewards a mixture of direct production, technical contribution, tactical progression, and market context.
+
+# 1. Research Motivation
+
+The European football transfer market is one of the largest transaction markets in global sport, with transfer spending reaching multi-billion-euro levels in recent seasons (Poli, Ravenel, and Besson, 2024). Despite the size of this market, public empirical work on how advanced football metrics map into actual transfer fees remains limited. In practice, clubs often discuss both traditional output indicators such as goals and assists and newer expectation-based indicators such as expected goals (xG), expected assists (xA), and progressive carries. This project asks how much explanatory power these newer metrics actually add once age, contract structure, league context, and timing effects are already controlled for.
+
+The broader motivation comes from an analytical pattern already established in baseball. MLB salary and arbitration research has shown that advanced tracking-based performance summaries can add explanatory value beyond traditional counting statistics (Chamberlain and Dolinar, 2015; Mendez, 2024). The football transfer market now has an analogous public-data environment through FBref's StatsBomb-powered Big 5 data, making it possible to ask a similar question in a different sport and market setting.
+
+This report therefore treats transfer valuation as a predictive and interpretive problem. The goal is not only to obtain an accurate model, but also to understand which types of player information the market appears to reward and which residual pricing patterns remain after observed performance and structural variables are taken into account.
+
+The project addresses six research questions adapted from the v5.0 project guideline.
+
+- Do pre-transfer advanced metrics significantly predict transfer fees after controlling for structural variables?
+- Which better explains transfer-fee variation: traditional outcome statistics or expectation-based metrics?
+- Do markets value players differently by position?
+- Are there league-level differences across the Big 5 in how player value is priced?
+- Do U21 players receive a conditional fee premium at equivalent performance levels?
+- Do O30 players receive a conditional veteran discount relative to the prime-age segment?
+
+# 2. Data
+
+## 2.1 Data Sources
+
+The project combines two main data sources. Player performance data come from FBref's Big 5 league tables, accessed through the `worldfootballR` cache-based function `load_fb_big5_advanced_season_stats()`. This R-based route was used because direct scraping of FBref and Transfermarkt produced HTTP 403 access problems during data collection. Transfer-fee and player metadata come from a Kaggle transfer dataset built from Transfermarkt records. The guideline explicitly documents this choice as a practical workaround because live Transfermarkt scraping was blocked.
+
+The analytical scope is intentionally limited to transfers involving the Big 5 leagues: Premier League, La Liga, Bundesliga, Serie A, and Ligue 1. This scope matters because FBref advanced metrics are consistently available only for players with Big 5 league records in the pre-transfer season. As a result, the study is not a census of all European transfers; it is a structured analysis of transfers for players with observable Big 5 performance histories.
+
+## 2.2 Data Collection and Construction Pipeline
+
+The data-construction script follows a multi-stage merge pipeline. First, season-level FBref performance tables were combined across shooting, passing, possession, defensive, and goalkeeper modules into a consolidated performance file. Second, transfer, player, and club tables from the Kaggle dataset were joined to construct the transfer side of the project. Third, the transfer sample was restricted to 2017-18 through 2023-24 transfer windows with positive transfer fees and Big 5 destination clubs.
+
+The transfer table was then deduplicated so that if a player moved twice in the same season, only the highest-fee move was retained. This decision avoids double-counting a player's seasonal transfer value signal and keeps the unit of analysis closer to one economically meaningful player-season transaction.
+
+## 2.3 Matching, Cleaning, and Feature Engineering
+
+The merged transfer-performance dataset required substantial cleaning before modeling. The most important technical step was player-name reconciliation between FBref and the Kaggle/Transfermarkt source. The cleaning script documents 212 name mismatches corrected through Jaro-Winkler fuzzy matching, followed by a small number of manual exception rules for false matches. This is a meaningful part of the project rather than a small preprocessing detail, because incorrect player matching would immediately contaminate the statistical relationship between performance and fees.
+
+The final cleaned file used for modeling is `clean_data.csv`. The current saved version contains 1,622 observations and 72 columns. This is slightly different from the v5.0 guideline checkpoint summary, which reported 1,621 observations and 71 columns, indicating that the saved final file reflects one later update in the data-construction pipeline. After filtering for valid target values and usable league information, Models 2 to 4 use a restricted sample of 1,407 observations.
+
+The feature-engineering step added several variables required by the final model design.
+
+- `log_transfer_fee` as the transformed target variable
+- `age_squared` to capture nonlinear age effects
+- `U21_dummy` for players aged 21 or younger
+- `O30_dummy` for players aged 30 or older
+- `contract_years_remaining`
+- `covid_dummy`
+- `season_proxy_flag`
+- `UEFA_coeff_from`
+- `league_level_diff`
+- per-90 versions of traditional and advanced performance variables
+
+## 2.4 Why Log Transfer Fee Is the Target
+
+Raw transfer fees are extremely right-skewed, which is visible both in the EDA histograms and in summary diagnostics reported in the guideline. The log transformation is therefore not a cosmetic modeling choice; it is necessary to reduce skewness, stabilize variance, and make linear-model residual behavior more interpretable. All main models are therefore estimated on `log_transfer_fee`, while final discussion translates implications back into the market-value context.
+
+## 2.5 Data Limitations and Mitigations
+
+The project guideline explicitly requires several data limitations to be stated in the final report, and they matter for interpretation.
+
+- Selection bias: players whose pre-transfer season was outside the Big 5 were excluded because FBref advanced metrics were unavailable for them. This means the results are not fully generalizable to all European transfers.
+- Proxy-season issue: some 2017-18 transfers rely on same-season performance as a proxy because full 2016-17 Big 5 FBref coverage was unavailable. The `season_proxy_flag` was created to mark these cases.
+- COVID-market disruption: transfer behavior in 2019-20 and 2020-21 was atypical, so `covid_dummy` is included as a structural control.
+- Missing advanced event families: some desired variables such as SCA and pressures were unavailable in the cached public pipeline, so progressive carrying and passing variables were used as substitutes.
+- Unobserved negotiation context: reputation, media exposure, agent influence, and strategic club urgency remain outside the observed dataset.
+
+## 2.6 Interpretive Framework
+
+This study is observational. Throughout the report, results should be interpreted as associations rather than causal effects. When a metric such as xG per 90 is positively related to transfer fees, this means that higher-xG players tended to be sold for higher fees after controlling for other variables. It does not mean that increasing xG mechanically causes a specific fee increase. This distinction is emphasized in the v5.0 guideline and should remain explicit in the final write-up.
+
+## 2.7 What xG Means in This Project
+
+Expected Goals (xG) is a probability-based shot-quality measure rather than a simple shot count or goal count. A shot with high historical conversion probability receives a higher xG value, while a poor-quality attempt receives a lower one. This matters because goals alone record only realized outcomes, whereas xG attempts to measure the quality of chances a player gets or creates. In this project, xG-based variables are used to test whether the transfer market pays only for realized outputs or also for the underlying quality signal embedded in performance events.
+
+## 2.8 Why Both R and Python Are Used
+
+The project intentionally uses both R and Python for different technical tasks. R is used for data collection and EDA because `worldfootballR` is the most reliable public route for pulling FBref Big 5 data at scale and because `ggplot2` is ideal for the multi-panel, position-specific, and league-specific figures used throughout the project. Python is used for model building because `scikit-learn` makes it easy to combine preprocessing, train/test splitting, cross-validation, and model fitting inside one reproducible pipeline. The two ecosystems are connected through intermediate CSV files such as `clean_data.csv`, `results.csv`, and the step-level summary outputs.
+
+# 3. Exploratory Data Analysis
+
+The exploratory data analysis phase was designed to answer two questions before modeling.
+
+- Is log transformation necessary for transfer fees?
+- Do visible market patterns suggest that position, league, age, and performance indicators should matter in the predictive model?
+
+## 3.1 Key Variable Distributions
+
+```{r graph1, out.width='48%'}
+include_graph_folder(1)
+```
+
+The distribution of raw transfer fees is strongly right-skewed: a small number of extreme transactions pull the mean far above the median, and the bulk of transactions cluster near the lower end of the fee range. This pattern reflects the structural reality of the football labor market, where marquee players command fees that are multiples of typical market transactions. If this variable were modeled in raw form, ordinary least squares assumptions would be severely strained because outliers would dominate coefficient estimates and residual variance would grow with fee size.
+
+The log transformation resolves this. After transformation, the distribution becomes substantially more symmetric and variance-stabilized, which is exactly what linear regression requires for more reliable inference. A one-unit difference in log transfer fee corresponds to a multiplicative difference in raw fee, so coefficients can later be interpreted in approximate percentage terms rather than only as arbitrary additive shifts.
+
+Performance variables such as xG per 90 and npxG per 90 show a different distributional challenge. Most players generate values near zero or low positive numbers, while a smaller number of elite attackers produce much larger values. This concentration near zero is expected because the dataset includes all position groups, including defenders and goalkeepers who rarely generate shots. It reinforces the decision to include position controls so that low-xG defensive players are not implicitly judged against high-xG forwards in one pooled interpretation.
+
+## 3.2 xG and Market Value by Position
+
+```{r graph2}
+include_graph_folder(2)
+```
+
+The position-coded scatter plot reveals that xG is not a universal pricing signal but a position-conditional one. Forwards show a visibly positive relationship between xG per 90 and log transfer fee, which is consistent with the idea that attacking chance quality is a valued production signal for goal-scoring roles. Midfielders also show a positive but weaker pattern. For defenders and goalkeepers, the relationship is much flatter or noisier, which is substantively reasonable because xG is not a primary-role metric for those positions.
+
+This pattern matters in two ways. First, it suggests that pooling all positions into one common xG slope would blend structurally different pricing relationships into a single number. Second, it previews the logic behind later position controls and possible future position-specific submodels.
+
+## 3.3 Transfer Fee Distribution by Position
+
+```{r graph3}
+include_graph_folder(3)
+```
+
+The positional fee distribution is one of the strongest descriptive results in the EDA. Forwards command the highest median fees by a substantial margin, reflecting the market's revealed preference for direct attacking production. Attacking midfielders form the second tier, followed by central midfielders and defensive midfielders, whose valuations reflect a combination of attacking contribution and structural importance to team organization. Center-backs and fullbacks occupy a middle pricing range, with fullback premiums in recent seasons reflecting the evolution toward attack-contributing wide defenders. Goalkeepers sit in a compressed pricing band, where the range is narrow and extreme high-fee outliers are rare relative to other positions.
+
+These are not simply outlier effects. The interquartile ranges themselves are separated across positions, meaning the typical transaction in each role differs from others at the median. This strongly supports the use of position dummies as structural controls: omitting them would force the model to explain position-level fee differences through performance variables, which would inflate coefficient estimates and produce misleading feature importance signals.
+
+## 3.4 Transfer Fee Distribution by League
+
+```{r graph4}
+include_graph_folder(4)
+```
+
+The league-level fee distributions reinforce a key premise of the project: transfer pricing is not purely about player quality but also about market context. The Premier League shows systematically higher fees at the median, reflecting both the financial firepower of English clubs and the global brand value attached to playing in England's top division. La Liga and the Bundesliga show similar central tendencies, while Serie A and Ligue 1 have lower median fees, consistent with their relative financial positions over the 2018–2024 window.
+
+These differences have direct modeling implications. If destination league is correlated with both the transfer fee paid and the performance metrics of the players involved, omitting league controls would create omitted variable bias. The inclusion of destination and origin league dummies is therefore not merely a convenience — it is methodologically necessary for isolating the marginal contribution of performance from the market-context premium.
+
+## 3.5 League Strength and Transfer Fees
+
+```{r graph5, out.width='48%'}
+include_graph_folder(5)
+```
+
+The UEFA coefficient scatter plot adds a quantitative dimension to the descriptive league comparison. Rather than treating all Big 5 leagues as equivalent, the UEFA coefficient captures the historical competitive strength of the origin league on a continuous scale. The positive relationship between origin league strength and transfer fee suggests that players arriving from more competitive league environments carry a reputational and statistical premium: their performance numbers were earned against harder opposition, and clubs appear to price this context into the transaction.
+
+The `league_level_diff` variable adds a complementary directional signal. Moving from a lower-rated league to a higher-rated one implies a different set of adaptation challenges and a different market signal than moving within the same tier. The direction of the transfer is therefore informative even after controlling for the absolute quality of origin and destination leagues.
+
+## 3.6 Youth Premium
+
+```{r graph6}
+include_graph_folder(6)
+```
+
+The U21 fee distribution provides preliminary evidence that age segmentation affects pricing beyond simple linear age effects. Even before any controls, U21 players in the dataset appear to command fees that are not simply explained by their current production levels. This is consistent with the logic that younger players are priced partly on expected future development rather than realized current performance. A club paying a premium for a 19-year-old is not only buying what that player has already shown; it is also buying the option on what the player might become.
+
+This introduces an important distinction that motivates the `U21_dummy` as a structural control. If the model only included continuous age and age-squared terms, the youth premium would not be captured cleanly for players at the extreme left tail of the age distribution. The dummy variable allows the model to estimate a discrete additional increment to transfer fees for this specific age segment.
+
+## 3.7 COVID Season Impact
+
+```{r graph7}
+include_graph_folder(7)
+```
+
+The year-over-year transfer volume and fee chart documents a sharp decline in 2020, which is exactly what the guideline predicted based on the financial disruption caused by the COVID pandemic. Transfer spending in summer 2020 was reported to have fallen roughly 40 percent relative to typical pre-pandemic levels, and the data here shows a consistent pattern of reduced activity and compressed fee distributions in the affected windows.
+
+The implication for modeling is straightforward. If COVID windows were pooled into the same regression without a structural control, the affected observations would appear as anomalously low-fee transactions relative to model predictions based on performance. This would inflate residuals for the COVID period and potentially bias coefficients on variables that happen to be correlated with which seasons were affected. The `covid_dummy` is therefore a necessary control rather than a minor adjustment.
+
+## 3.8 Age and Transfer Fees
+
+```{r graph8}
+include_graph_folder(8)
+```
+
+The scatter plot of age against log transfer fee reveals a pattern that is clearly not linear. Fees rise from the late-teen ages through the early 20s, reach a visible peak in the early-to-mid prime window, and then decline for players in their late 20s and 30s. This inverted-U shape is exactly what economic theory would predict given that transfer fee reflects expected future contribution discounted over remaining contract value: younger players have more prime years ahead, while older players have fewer years to contribute and lower resale potential.
+
+A linear age term would capture the average direction of this relationship but miss both the upward portion for young players and the steeper decline at older ages. Including `age_squared` alongside age allows the regression surface to bend in the direction the data actually support. The graphical evidence here is the direct motivation for that modeling decision.
+
+## 3.9 Correlation Structure
+
+```{r graph9}
+include_graph_folder(9)
+```
+
+The correlation matrix shows that performance variables are positively correlated with each other and with log transfer fees, but not to a degree that would make any single pair redundant. For example, goals per 90 and xG per 90 are positively correlated, which makes sense because better scorers tend to generate higher-quality chances, but the correlation is well below 1.0, meaning they contain distinct information. Key passes and xA are similarly related but not identical.
+
+The more important takeaway is that several variable pairs show enough correlation to warrant multicollinearity screening before final model selection. The correlation matrix is therefore the diagnostic basis for the VIF screening conducted in Model 4. Without this early check, a naive combined model would risk inflating standard errors and producing unstable coefficient estimates. The pre-modeling correlation review is standard statistical practice that directly shapes the analytical choices in Section 8.
+
+## 3.10 Position-Specific Metric Relationships
+
+```{r graph10, out.width='48%'}
+include_graph_folder(10)
+```
+
+The position-specific panels provide the most direct visual motivation for treating different positions as structurally different labor markets. Forwards show clear positive relationships between npxG and fees. Central midfielders show stronger associations with passing and creation metrics than with direct scoring measures. Defenders' fees are more closely associated with defensive contribution metrics such as tackles and interceptions. Goalkeepers' fees show essentially no relationship with outfield performance metrics.
+
+These patterns support the project guideline's decision to define separate variable sets for each position group rather than applying one unified metric list across all player types. In a future extension, fitting separate sub-models for each position group would likely produce stronger and more interpretable results than the current pooled model with position dummies.
+
+## 3.11 Position-Level Age Peak Analysis
+
+```{r graph11}
+include_graph_folder(11)
+```
+
+The position-specific age-fee curves add nuance to the global nonlinear age finding. Attacking players appear to peak earlier in the fee distribution, consistent with the idea that forward production depends on explosive physical attributes that decline sooner. Defenders and midfielders show somewhat flatter and later peak patterns, reflecting that positional reading, experience, and tactical understanding may remain valuable longer. Goalkeepers show the most prolonged age-value curve, which is consistent with observations in the football literature that shot-stopping skill and commanding presence often peak relatively late.
+
+The single pooled quadratic age term in the main model averages across all of these position-specific curves. This is an appropriate compromise given sample size constraints, but it means the model's age coefficient should not be interpreted as a universal career-value trajectory applicable to all player types equally.
+
+## 3.12 Traditional vs Advanced Metrics
+
+```{r graph12}
+include_graph_folder(12)
+```
+
+The head-to-head comparison of traditional and advanced metrics across positions is one of the most substantively interesting EDA findings. In attacking positions, advanced metrics such as npxG and xA appear roughly as informative as goals and assists for explaining fee variation. In midfield and defensive positions, the picture is mixed: sometimes traditional metrics track fees more closely, sometimes advanced metrics do, and for some position groups neither family is clearly dominant.
+
+This descriptive ambiguity is exactly why the project does not simply declare advanced metrics superior or inferior. The correct conclusion — later confirmed by the model results — is that advanced indicators add value when combined with traditional ones, rather than replacing them. The EDA here previews that finding.
+
+## 3.13 Age Group Fee Differences
+
+```{r graph13, fig.width=12, fig.height=6}
+age_group_plot_df <- clean_data %>%
+  mutate(
+    age_group = case_when(
+      age_at_transfer <= 21 ~ "U21\n(<=21)",
+      age_at_transfer >= 30 ~ "O30\n(>=30)",
+      TRUE ~ "Prime\n(22-29)"
+    ),
+    age_group = factor(age_group, levels = c("U21\n(<=21)", "Prime\n(22-29)", "O30\n(>=30)"))
+  )
+
+age_group_stats <- age_group_plot_df %>%
+  filter(!is.na(log_transfer_fee)) %>%
+  group_by(age_group) %>%
+  summarise(
+    n = n(),
+    median_raw_fee = median(transfer_fee_raw, na.rm = TRUE),
+    median_log_fee = median(log_transfer_fee, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(age_group_plot_df %>% filter(!is.na(log_transfer_fee)),
+       aes(x = age_group, y = log_transfer_fee, fill = age_group)) +
+  geom_boxplot(outlier.alpha = 0.3, outlier.size = 1.0, width = 0.55, linewidth = 0.6) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 3.5, color = "black", show.legend = FALSE) +
+  geom_text(
+    data = age_group_stats,
+    aes(x = age_group, y = median_log_fee,
+        label = paste0("Median\nEUR ", round(median_raw_fee / 1e6, 1), "M\nn=", n)),
+    vjust = -1.2, size = 3.2, fontface = "bold", inherit.aes = FALSE
+  ) +
+  scale_fill_manual(values = c(
+    "U21\n(<=21)" = "#a8e6cf",
+    "Prime\n(22-29)" = "#74b9ff",
+    "O30\n(>=30)" = "#ff7675"
+  )) +
+  labs(
+    title = "Transfer Fee Distribution by Age Group: U21, Prime, and O30 Segments",
+    subtitle = "Three-way comparison of youth premium, prime-age pricing, and veteran discount",
+    x = "Age Group",
+    y = "log(Transfer Fee)"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(size = 10, color = "#555555"),
+    plot.margin = margin(18, 12, 8, 12),
+    legend.position = "none"
+  )
+```
+
+The three-way comparison among U21, prime-age, and O30 players reveals structurally distinct pricing tiers. Prime-age players (roughly 22 to 29) show the widest fee range and the highest maximum fees, reflecting the full variance of talent quality in the most heavily transacted segment of the labor market. U21 players show a compressed but meaningfully elevated median relative to O30 players, suggesting that the market is willing to pay above pure current performance for youth optionality. O30 players show the most compressed distribution and the lowest median, reflecting a market that discounts aging players' residual value even if their current performance remains solid.
+
+This three-way structure motivates the inclusion of both `U21_dummy` and `O30_dummy` as separate controls in the baseline model. A single continuous age term, or even a quadratic one, does not cleanly separate these three pricing regimes because the breaks in market behavior are not smooth.
+
+## 3.14 O30 Distribution
+
+```{r graph14, fig.width=10, fig.height=9}
+p14a <- ggplot(clean_data,
+               aes(x = O30_label, y = log_transfer_fee, fill = O30_label)) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 3,
+               color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = c("O30 (Veteran)" = "#e74c3c",
+                               "Under 30" = "#3182bd")) +
+  labs(
+    title = "Transfer Fee: O30 Veteran vs Under-30 Players",
+    subtitle = paste0("O30 n=", sum(clean_data$O30_dummy == 1, na.rm = TRUE),
+                      "  |  Under 30 n=", sum(clean_data$O30_dummy == 0, na.rm = TRUE)),
+    x = "Player Type",
+    y = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+
+full_density <- clean_data %>%
+  filter(!is.na(log_transfer_fee)) %>%
+  mutate(group = "Full Sample")
+
+o30_density <- clean_data %>%
+  filter(!is.na(log_transfer_fee), O30_dummy == 1) %>%
+  mutate(group = "O30 Players")
+
+density_combined <- bind_rows(full_density, o30_density)
+
+p14b <- ggplot(density_combined,
+               aes(x = log_transfer_fee, fill = group, color = group)) +
+  geom_density(alpha = 0.40, linewidth = 1.0) +
+  scale_fill_manual(values = c("Full Sample" = "#3182bd",
+                               "O30 Players" = "#e74c3c")) +
+  scale_color_manual(values = c("Full Sample" = "#2c6fad",
+                                "O30 Players" = "#c0392b")) +
+  geom_vline(
+    xintercept = median(clean_data$log_transfer_fee[clean_data$O30_dummy == 1], na.rm = TRUE),
+    color = "#c0392b", linetype = "dashed", linewidth = 0.9
+  ) +
+  geom_vline(
+    xintercept = median(clean_data$log_transfer_fee, na.rm = TRUE),
+    color = "#2c6fad", linetype = "dashed", linewidth = 0.9
+  ) +
+  labs(
+    title = "Transfer Fee Density: O30 Players vs Full Sample",
+    subtitle = "Red = O30 veterans | Blue = full dataset | Dashed lines = medians",
+    x = "log(Transfer Fee)",
+    y = "Density",
+    fill = "Group",
+    color = "Group"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top")
+
+p14a / p14b
+```
+
+The O30 comparison adds detail to the veteran discount story. The boxplot confirms that the O30 distribution is not simply shifted slightly downward; its interquartile range is narrower, meaning the market not only pays less for older players on average but also exhibits less fee variability within that segment. The density overlay makes this even clearer: the full sample distribution has a long right tail associated with marquee high-value transfers, while the O30 density curve is truncated at the upper end. Very few veteran players are involved in truly elite-level fee transactions, which reduces the overall spread.
+
+The dashed median lines show that the O30 median is meaningfully lower than the full-sample median. However, this unconditional comparison must be interpreted carefully. Some of the O30 discount reflects the fact that older players are more likely to be on expiring contracts, may have played fewer minutes, or may be moving to lower-tier destinations. These are factors the model controls for, which means the model-estimated `O30_dummy` coefficient captures the residual age discount after these other channels are accounted for.
+
+## 3.15 EDA Conclusion
+
+The EDA step provides four important takeaways that directly shape the modeling stage.
+
+- The dependent variable should be modeled in logs.
+- Position and league context are too important to ignore.
+- Age effects are nonlinear rather than linear.
+- Performance indicators overlap in information content, so combined models must handle multicollinearity carefully.
+
+# 4. Modeling Framework
+
+The project estimates four sequential models. Each model is designed to answer a specific empirical question rather than simply maximize fit.
+
+- Model 1 asks how much transfer valuation can be explained from market structure and player profile alone.
+- Model 2 asks whether traditional performance indicators improve on the baseline.
+- Model 3 asks whether advanced performance indicators improve on the baseline.
+- Model 4 asks whether a carefully selected combined specification can outperform all simpler alternatives.
+
+This staged design makes the final conclusion much more interpretable than a single black-box model would.
+
+# 5. Model 1: Baseline Structural Model
+
+```{r model1_metrics_table}
+small_kable(model1_metrics, "Model 1 Metrics")
+```
+
+Model 1 achieves a test R-squared of 0.270 on a sample of 1,622 observations. This means that structural variables alone — age profile, contract length, league context, COVID timing, and seasonal proxy controls — explain approximately 27 percent of the variance in log transfer fees on held-out data. That is not a trivial baseline. It confirms that a meaningful share of transfer pricing is determined by market structure factors that have nothing to do with what the player actually did on the pitch in the prior season.
+
+The cross-validated R-squared of 0.210 (SD 0.062) is somewhat lower than the test result, which is not unusual when the cross-validation partitions include season-based variation. The gap between CV and test R-squared is within a normal range and does not suggest that the baseline model is overfit. The CV standard deviation of 0.062 indicates moderate stability across folds.
+
+The practical implication is that any model claiming to explain transfer fees must first account for these structural variables. Not doing so would conflate, for example, the higher fees associated with Premier League destinations with the performance levels of the players involved.
+
+# 6. Model 2: Baseline + Traditional Metrics
+
+```{r model2_metrics_table}
+small_kable(model2_metrics, "Model 2 Metrics")
+```
+
+Model 2 adds traditional performance variables — goals per 90, assists per 90, and minutes played per 90 — to the baseline specification. Test R-squared rises to 0.388, a gain of approximately 12 percentage points over Model 1. This means traditional statistics carry genuine pricing information that is not already embedded in age, contract, and league variables.
+
+The cross-validated R-squared of 0.275 (SD 0.098) shows a slightly larger standard deviation than Model 1, which is expected when new variables are added. The higher SD in CV reflects that traditional metrics are somewhat less stable across folds — possibly because goals and assists are noisy single-season counts that vary more across subsets of the data than structural variables.
+
+The test RMSE of approximately 0.993 means that on the held-out test set, the average prediction error in log fee units is roughly 0.99. Because the target is on a log scale, this still translates to substantial real-money uncertainty. Even so, the improvement over the baseline is clear and meaningful.
+
+# 7. Model 3: Baseline + Advanced Metrics
+
+```{r model3_metrics_table}
+small_kable(model3_metrics, "Model 3 Metrics")
+```
+
+Model 3 achieves a test R-squared of 0.333, which is lower than Model 2's 0.388 on the same held-out test set. This is a substantively important finding. xG per 90, progressive carries, pass completion rate, key passes, aerial win rate, and ball recoveries — the advanced block — do not outperform goals and minutes in isolation. However, Model 3's mean cross-validated R-squared of 0.280 is slightly higher than Model 2's 0.275.
+
+This apparent contradiction resolves when measurement error and overfitting risk are considered. The test set result reflects what happens on one specific 80/20 split, while cross-validation averages over multiple partitions. A possible interpretation is that advanced metrics generalize more stably in CV but happen to perform somewhat worse on the particular test split used. This does not mean Model 2 is unambiguously better; it means the two approaches have similar overall predictive power when evaluated across multiple partitions.
+
+The more important finding is what happens in Model 4: the combination outperforms both. This means the right question is not which block wins standalone, but whether the blocks are complementary.
+
+# 8. Model 4: Combined Model
+
+```{r model4_metrics_table}
+small_kable(model4_metrics, "Model 4 Metrics")
+```
+
+Model 4 achieves a test R-squared of 0.468 and a test RMSE of 0.926. Cross-validated R-squared is 0.378 (SD 0.045), which is substantially higher than any of Models 1 through 3, and the cross-validation standard deviation is the lowest of all four models. This last point matters: Model 4 is not only more accurate but also more stable across different data partitions. The combination of higher mean CV R-squared and lower CV standard deviation means Model 4 is the most reliable specification in the project.
+
+The 8 retained candidate variables after VIF and AIC/BIC screening are: goals per 90, minutes played per 90, xG per 90, progressive carries per 90, pass completion rate, key passes per 90, aerial win rate, and recoveries per 90. Each of these survived because they contributed unique explanatory signal beyond what the other retained variables already covered.
+
+The most analytically interesting retained pair is goals per 90 and xG per 90 together. Their coexistence in the final model implies that the market prices both realized scoring output and the quality of scoring opportunities, and that these two signals are not fully interchangeable.
+
+## 8.1 Final Selected Variables
+
+```{r model4_selected_table}
+small_kable(model4_selected, "Final Selected Candidate Variables in Model 4")
+```
+
+The final model retains eight candidate performance variables: goals per 90, minutes played per 90, xG per 90, progressive carries per 90, pass completion rate, key passes per 90, aerial win percentage, and recoveries per 90. This shows that the transfer market values a mixture of direct production and broader football contribution. Goals and minutes remain important, but they are not sufficient. The market also appears to price technical quality, ball progression, passing efficiency, and broader all-phase involvement.
+
+One especially important result is that `Gls_per90` and `xG_Per` survive together. This means realized output and underlying chance-quality information are not redundant in the final pricing model. Clubs appear to pay for both.
+
+## 8.2 Multicollinearity Check
+
+```{r model4_vif_table}
+small_kable(model4_vif, "Final Candidate VIF Values")
+```
+
+All retained candidate variables remain below a VIF of 3, which indicates that the final combined model is not being driven by severe multicollinearity. This is a strong diagnostic result because it means the combined specification can be interpreted with more confidence than a naive all-variables model.
+
+## 8.3 AIC/BIC Selection History
+
+```{r model4_aicbic_table}
+small_kable(model4_aicbic, "AIC/BIC-Based Elimination History")
+```
+
+The elimination history reveals which variables were cut and why. Assists per 90 was removed despite being a traditional metric routinely cited in football commentary. This reflects the statistical finding that once key passes per 90 is already in the model, assists no longer contribute enough unique explanatory power to justify inclusion. Key passes captures a broader set of chance-creating actions, while assists are a noisier subset of that signal that depends partly on finishing luck by teammates.
+
+npxG per 90 was also removed in favor of xG per 90. These two are highly correlated because non-penalty xG simply removes penalty shots from the total. In practice, penalty shots are relatively rare at the per-90 level, so the two measures are nearly redundant in the prediction context.
+
+## 8.4 Model Comparison Summary
+
+```{r model_compare_table}
+wide_kable(model_compare, "Comparison of All Four Models")
+```
+
+Taken together, the four-model sequence supports three conclusions.
+
+- Structural controls alone are informative but insufficient.
+- Traditional metrics outperform advanced metrics when the two blocks are tested separately on the held-out test set.
+- The strongest predictive specification emerges when selected advanced metrics are layered onto traditional metrics rather than treated as substitutes for them.
+
+# 9. Step 8: Residual Analysis and Feature Importance
+
+Step 8 is designed to answer two questions. First, which variables matter most once the final model is chosen? Second, which transfer cases remain most difficult to explain even after controlling for the selected predictors?
+
+## 9.1 Why Three Feature-Importance Methods Are Used
+
+The guideline specifically recommends not relying on one importance measure alone, and that is good advice. This report uses three complementary approaches.
+
+- Absolute standardized coefficients summarize conditional linear importance in the final linear specification.
+- Random forest permutation importance evaluates how much predictive performance drops when each variable is disrupted inside a nonlinear ensemble.
+- XGBoost permutation importance provides a second nonlinear robustness check under a different tree-based learning structure.
+
+If a variable ranks highly across all three approaches, confidence in its substantive importance is much stronger. If a variable appears important in only one approach, its signal is likely more model-dependent.
+
+## 9.2 Feature-Importance Results
+
+```{r top_std_table}
+small_kable(top_std, "Top 10 Features by Absolute Standardized Coefficient")
+```
+
+```{r top_rf_table}
+small_kable(top_rf, "Top 10 Features by Random Forest Permutation Importance")
+```
+
+```{r top_xgb_table}
+small_kable(top_xgb, "Top 10 Features by XGBoost Permutation Importance")
+```
+
+```{r top_importance_table}
+wide_kable(top_importance, "Combined Feature Importance Comparison", font_size_num = 6)
+```
+
+Several variables appear repeatedly across methods. Destination to the Premier League, minutes played per 90, pass completion rate, goals per 90, contract years remaining, xG per 90, and progressive carrying all appear as meaningful predictors in multiple frameworks. This matters because it shows the final model is not relying on a single narrow dimension of football quality. The market prices a layered combination of output, availability, context, and broader technical contribution.
+
+One useful cautionary example is `Recov_per90`. It survives the linear-model selection process, which means it contributes signal in the final regression, but its random forest permutation importance is slightly negative (`r round(recov_importance$rf_perm_importance_mean, 4)`). A negative permutation score means that in the nonlinear robustness check, permuting that feature does not consistently reduce predictive performance. The right interpretation is not that recoveries are useless, but that their importance appears more fragile and model-dependent than variables such as minutes, league destination, or goals.
+
+## 9.3 Top Positive and Negative Residual Cases
+
+```{r top_overpriced_table}
+custom_kable(
+  top_overpriced,
+  "Top 10 Cases Above Model Prediction (Test Set)",
+  align_vec = c("p{3.0cm}", "l", "p{6.5cm}", "r", "r"),
+  font_size_num = 6
+)
+```
+
+```{r top_underpriced_table}
+custom_kable(
+  top_underpriced,
+  "Top 10 Cases Below Model Prediction (Test Set)",
+  align_vec = c("p{3.0cm}", "l", "p{6.5cm}", "r", "r"),
+  font_size_num = 6
+)
+```
+
+These cases should be interpreted as model-implied deviations, not as definitive statements of overvaluation or undervaluation. A positive residual means the realized transfer fee exceeded the model prediction, while a negative residual means the realized fee fell below the model prediction. Large residuals may reflect unobserved factors such as reputation, club urgency, bargaining power, tactical fit, injury uncertainty, or strategic market timing.
+
+## 9.4 Step 8 Conclusion
+
+Step 8 shows that the final model is substantively interpretable. It identifies a stable group of important variables across multiple methods and highlights the transfer cases that remain difficult to explain even after controlling for a wide range of observed predictors.
+
+# 10. Step 9: Residual Visualization
+
+Residual visualization is used to test whether there are systematic error patterns across train and test splits, positions, leagues, age groups, and core performance variables.
+
+## 10.1 Overall Residual Distribution
+
+```{r step9_overall_table}
+wide_kable(step9_overall, "Overall Residual Summary", font_size_num = 6)
+```
+
+![](`r file.path(step9_fig_dir, "step9_residual_density_by_split.png")`)
+
+The residual density plot is one of the cleanest validation results in the report. The train and test curves are highly similar and both remain centered close to zero. This indicates that the final model is not showing severe distributional overfitting: it does not fit the training sample with one error structure and then collapse into a very different one on the test sample.
+
+The summary table reinforces this. Mean residual is close to zero, median residual is only slightly positive, and the central tendency of the error distribution is stable across the pooled evaluation. The model still makes large mistakes on some individual transfers, but it does not exhibit large systematic average bias.
+
+## 10.2 Residuals by Position
+
+```{r step9_position_table}
+small_kable(step9_position, "Residual Summary by Position")
+```
+
+![](`r file.path(step9_fig_dir, "step9_residual_by_position.png")`)
+
+Position-level residual differences are present but not dramatic. Goalkeepers show the highest mean absolute residual, which suggests that goalkeeper valuation may be relatively more volatile or influenced by factors the model does not directly capture. This is also visible in specific cases. Alphonse Areola, for example, appears in the test set with a residual of about `r round(areola_case$residual, 3)` and a percentage gap of roughly `r round(areola_case$pct_gap_percent, 1)` percent, with the model predicting approximately `r round(areola_case$predicted_fee_eur / 1e6, 2)` million euros versus an actual fee of roughly `r round(areola_case$actual_fee_eur / 1e6, 2)` million euros. That is an extreme example, but it illustrates why goalkeeper pricing remains harder to explain than other broad position groups.
+
+This does not mean the position controls failed. It means that even after position is controlled for, goalkeeper valuation still contains more unexplained variance than the other pooled categories.
+
+## 10.3 Residuals by League
+
+```{r step9_to_league_table}
+wide_kable(step9_to_league, "Residual Summary by Destination League", font_size_num = 6)
+```
+
+```{r step9_from_league_table}
+wide_kable(step9_from_league, "Residual Summary by Origin League", font_size_num = 6)
+```
+
+![](`r file.path(step9_fig_dir, "step9_residual_by_to_league.png")`)
+
+![](`r file.path(step9_fig_dir, "step9_residual_by_from_league.png")`)
+
+League-level differences are modest overall, but not random. Bundesliga and Premier League contexts tend to show slightly more positive residuals, while La Liga is slightly more negative. The important point is the word "slightly": the distributions overlap heavily, so these are mild residual tendencies rather than major systematic distortions.
+
+This means the league controls are doing most of the work they need to do, but not all of it. Some pricing context remains league-specific even after the main structural variables are included.
+
+## 10.4 U21 Premium
+
+```{r step9_u21_table}
+wide_kable(step9_u21, "Residual Summary by U21 Status", font_size_num = 6)
+```
+
+![](`r file.path(step9_fig_dir, "step9_u21_premium_boxplot.png")`)
+
+U21 players show slightly higher residuals than non-U21 players, especially at the median. This suggests a modest residual youth premium even after controlling for the main model predictors. That is an important distinction from the raw descriptive age plots. The residual result says that even after accounting for observed performance and structural context, younger players still tend to transact slightly above model prediction.
+
+However, the effect is modest rather than dominant. The result supports a youth-premium narrative, but not an overwhelming one.
+
+## 10.5 Residuals and Key Performance Metrics
+
+```{r step9_corr_table}
+small_kable(step9_corr, "Correlation Between Residuals and Key Performance Metrics")
+```
+
+![](`r file.path(step9_fig_dir, "step9_xg_vs_residual.png")`)
+
+![](`r file.path(step9_fig_dir, "step9_goals_vs_residual.png")`)
+
+![](`r file.path(step9_fig_dir, "step9_kp_vs_residual.png")`)
+
+The remaining linear relationships between residuals and core attacking metrics are very small. Correlations for xG per 90, goals per 90, and key passes per 90 are all close to zero in magnitude. This is a very useful result because it shows that Model 4 has already absorbed most of the linear explanatory signal available in those variables. In other words, the residuals are not dominated by simple leftover attacking-performance information.
+
+This strengthens confidence in the combined model. If strong positive residual correlations had remained, that would have signaled a missing or mis-specified performance block. Instead, the remaining patterns are weak.
+
+## 10.6 League-Specific xG Pricing Sensitivity
+
+```{r league_xg_slope_table}
+wide_kable(league_xg_slopes, "Destination-League-Specific xG Slope Estimates", font_size_num = 6)
+```
+
+```{r league_xg_barplot, fig.height=5, fig.width=8}
+ggplot(league_xg_slopes, aes(x = reorder(to_league_label, xg_coef), y = xg_coef)) +
+  geom_col(fill = "#4C78A8", alpha = 0.85) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.15) +
+  coord_flip() +
+  labs(
+    title = "League-Specific xG Pricing Sensitivity",
+    subtitle = "Simple destination-league regressions of log fee on xG per 90",
+    x = NULL,
+    y = "Estimated xG coefficient"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+This additional differentiation analysis responds directly to the guideline's request to examine whether xG is valued differently across the Big 5. The answer is yes. The estimated xG slope is positive in all five destination leagues, but the magnitude differs meaningfully. In this sample, Ligue 1 and Serie A show the strongest simple xG-fee association, La Liga and Bundesliga are in the middle, and the Premier League shows the smallest positive slope.
+
+These league-specific regressions are descriptive rather than fully controlled. They should therefore be interpreted as pricing sensitivity snapshots, not as causal structural coefficients. Still, they strengthen one of the broader themes of the project: the market does not reward performance signals in exactly the same way across leagues.
+
+## 10.7 Step 9 Conclusion
+
+Step 9 reinforces the interpretation that Model 4 is well-centered, reasonably stable, and not leaving large systematic performance-based patterns unexplained. The remaining differences by position, league, and age segment are real but modest, which is exactly what one would hope to see in a final residual check.
+
+# 11. Step 10: Seasonal Stability and Age Effects
+
+The final analytical step examines whether model performance is stable over time and whether age effects are best interpreted as linear or nonlinear.
+
+## 11.1 Season-by-Season Performance
+
+```{r step10_season_table}
+wide_kable(step10_season, "Season-by-Season Test Performance", font_size_num = 6)
+```
+
+![](`r file.path(step10_fig_dir, "step10_season_test_r2.png")`)
+
+![](`r file.path(step10_fig_dir, "step10_season_test_rmse.png")`)
+
+Season-by-season performance varies more than one would expect from pure noise. Test R-squared ranges from about 0.281 in 2019-20 to about 0.606 in 2018-19. This suggests that the transfer market is structurally more predictable in some periods than others.
+
+The strongest fit appears in 2018-19, which looks like a relatively normal pre-pandemic market period. The weakest fit occurs in 2019-20, which is consistent with the early COVID disruption. The `covid_dummy` captures the average level shift, but it cannot fully absorb transaction-level uncertainty, restructuring, and timing distortions. The 2020-21 season has the lowest RMSE, which may reflect a narrower overall fee distribution in a compressed market rather than a fundamentally easier modeling problem. By contrast, 2023-24 has the highest RMSE, which likely reflects higher pricing volatility at the upper end of the market.
+
+Notably, the 2018-19 season shows the largest negative mean residual (-0.324), suggesting that the model systematically underpredicted fees in that window despite its strongest R². This indicates that although the model captured relative ranking especially well in 2018-19, the overall fee level in that season appears to have been higher than the model's central expectation.
+
+The broader conclusion is that the model remains informative in every season, but predictability is not constant over time.
+
+## 11.2 Nonlinear Age Effect
+
+```{r step10_peak_table}
+wide_kable(step10_peak, "Age Effect Summary", font_size_num = 6)
+```
+
+![](`r file.path(step10_fig_dir, "step10_model_implied_age_curve.png")`)
+
+![](`r file.path(step10_fig_dir, "step10_empirical_age_pattern.png")`)
+
+![](`r file.path(step10_fig_dir, "step10_median_log_fee_by_age.png")`)
+
+The age effect is clearly nonlinear, but its interpretation requires care. The quadratic turning point lies below the observed sample range, which means that within the actual observed ages in the data, the conditional age component trends downward as age increases. In other words, once other model controls are held fixed, younger ages receive a stronger age-related component in the fitted specification.
+
+However, the unconditional raw market pattern looks different. Median observed log transfer fees are highest around the early 20s, especially roughly 21 to 24. These two results are not contradictory. They answer different questions. The raw age-fee pattern describes who actually commands the largest fees in the observed market. The conditional model effect describes how age matters after holding performance, league context, contract variables, and other controls fixed.
+
+## 11.3 Interpreting U21 and O30 Indicators
+
+The U21 and O30 variables should not be read as simple standalone premiums or discounts in isolation from the broader age structure. The descriptive EDA clearly suggests that youth, prime-age, and veteran players occupy different pricing tiers. The residual analysis also suggests a modest U21 premium. At the same time, the final age specification includes both a nonlinear age polynomial and discrete age-segment dummies, which means the interpretation is joint rather than one-dimensional.
+
+For O30 players, the raw descriptive evidence strongly suggests a veteran discount in unconditional fee distributions. However, the conditional model does not support a large additional O30 penalty after age, performance, and structural controls are included. This is a subtle but important answer to the sixth research question. The market clearly pays less for older players in raw terms, but much of that discount is already absorbed by the broader control structure rather than by an additional large O30 penalty alone.
+
+## 11.4 Step 10 Conclusion
+
+Step 10 shows that Model 4 is reasonably stable across seasons and that age effects are best interpreted as conditional nonlinear effects rather than as simple statements about one universally most valuable age. It also clarifies that youth and veteran segmentation matter, but their meaning changes depending on whether the question is unconditional description or conditional regression interpretation.
+
+# 12. What This Project Reveals
+
+Taken together, the project reveals three broad things about football transfer valuation.
+
+First, the transfer market is not reducible to raw output alone. Structural context already explains a meaningful share of fee variation before any performance metrics are added. Age, contract status, destination market, origin-league strength, and macro timing all matter.
+
+Second, once performance enters the model, the market appears to reward more than goals. Traditional metrics remain powerful, but the strongest final model keeps both traditional outputs and advanced indicators such as xG, progressive carrying, and key passes. This means that clubs appear to price not only what a player did, but also how that output was generated and what broader technical value the player carries.
+
+Third, the market remains heterogeneous. Position matters, league context matters, and some segments — especially goalkeepers and older players — are harder to explain cleanly with public structured variables alone. The model gets a large amount right, but it does not reduce the market to a fully mechanical pricing system. That is analytically valuable in itself.
+
+# 13. Main Findings
+
+The complete analysis supports the following findings.
+
+- Transfer fees are strongly right-skewed, so modeling in logs is necessary.
+- Market structure variables such as age, contract status, and league context already explain a meaningful part of transfer valuation.
+- Traditional performance variables outperform advanced variables when each block is used alone on the held-out test set.
+- Advanced metrics nevertheless improve prediction when selected and combined with traditional metrics.
+- The final combined model is both more accurate and more stable than the alternatives.
+- Goals per 90 and xG per 90 survive together in the final specification, indicating that the market values both realized output and underlying chance quality.
+- Residuals are centered close to zero and remain broadly stable across train and test distributions.
+- Goalkeepers show relatively larger unexplained dispersion than other broad position groups.
+- League-level residual differences remain modest rather than dominant.
+- U21 players show a modest residual premium after controls, while O30 players show a strong raw descriptive discount but not a large additional standalone conditional penalty once broader controls are included.
+- The model captures most of the remaining linear signal in xG, goals, and key passes.
+
+# 14. Limitations
+
+This project also has several limitations that are important for interpretation.
+
+- Selection bias is built into the sample design. Players transferring into the Big 5 from non-Big-5 leagues were often excluded because pre-transfer FBref advanced metrics were unavailable for them. This means the findings are strongest for transfers involving players with Big 5 observable histories.
+- Model 1 uses the broader raw sample, while Models 2 to 4 use the filtered 1,407-observation modeling sample. Cross-model comparisons involving Model 1 should therefore be interpreted with caution.
+- The project is observational rather than causal. The results identify predictive relationships, not causal effects.
+- Some 2017-18 observations rely on same-season proxy performance because prior-season FBref coverage was unavailable. This is why `season_proxy_flag` is included.
+- COVID-affected seasons likely altered transfer behavior in ways not fully reducible to a simple dummy variable.
+- Some relevant market factors remain unobserved, including negotiation context, injuries, reputation effects, language adjustment, cultural adaptation, and club-specific financial constraints.
+- `Recov_per90` appears less stable in nonlinear robustness checks than in the linear selection framework, which suggests that some retained signals are more model-dependent than others.
+- The project uses a global pooled model rather than separate position-specific submodels. Given the EDA and residual findings, that is probably the most important extension for future work.
+
+# 15. Final Conclusion
+
+This project began with a simple but important question: when clubs decide how much to pay for a player, are they responding only to visible box-score outputs, or are they also pricing deeper indicators of football quality?
+
+The answer that emerges is nuanced and empirically grounded. The transfer market is not simply a box-score market. Traditional metrics such as goals and minutes remain strong predictors, but the strongest model in the project combines them with advanced indicators including xG per 90, progressive carries, key passes, aerial success, and recoveries. Each of these survives a rigorous final screening process based on multicollinearity and information criteria, which means each contributes unique explanatory signal that the others do not fully cover.
+
+The most direct answer to the original question is the coexistence of goals per 90 and xG per 90 in the final model. This implies that clubs, whether or not they explicitly cite expected-goals models in negotiation rooms, are effectively pricing something consistent with shot quality rather than just realized goal counts. Advanced metrics are not replacing traditional statistics in transfer valuation; they are supplementing them.
+
+The secondary findings add important texture to this main conclusion. Position determines not just the absolute level of fees but the logic through which players are priced. Age effects are real but conditional. COVID disruption was large enough to reduce predictability but not large enough to erase the broader market structure. Goalkeeper valuation remains partly outside what structured public variables can explain. O30 players clearly face lower raw market valuations, but much of that veteran discount is absorbed once the broader model controls are imposed.
+
+Taken together, the findings suggest that the European football transfer market is neither purely efficient nor entirely irrational. It rewards measured performance, adjusts for structural context, and appears increasingly responsive to advanced statistical signals — but it also retains residual complexity that reflects negotiation, role-specific valuation, and club-level strategy. That complexity is not a failure of the model. It is an accurate reflection of how the market actually works.
+
+# 16. Future Extensions
+
+Several natural extensions would build on the results of this project.
+
+- A Streamlit-based interactive transfer-fee predictor could turn the final model into a portfolio-ready web application.
+- League-specific or position-specific models could test whether different markets reward different performance profiles.
+- Additional contextual variables such as injury history, international status, wage levels, or club finances could improve residual explanation.
+- More flexible nonlinear and interaction-based models could be compared against the current linear benchmark.
+
+# 17. References
+
+- Chamberlain, A., and Dolinar, S. (2015). *Modeling salary arbitration: Stat components*. FanGraphs. https://blogs.fangraphs.com/modeling-salary-arbitration-stat-components/
+- Dendir, S. (2016). *When do soccer players peak? A note*. Journal of Sports Analytics, 2(2), 89-105. https://doi.org/10.3233/JSA-160021
+- Franceschi, M., Brocard, J. F., Follert, F., and Gouguet, J. J. (2024). *Determinants of football players' valuation: A systematic review*. Journal of Economic Surveys, 38(3), 577-600. https://doi.org/10.1111/joes.12552
+- Kalen, A., Rey, E., de Rellan-Guerra, A. S., and Lago-Ballesteros, J. (2019). *Are soccer players older now than before? Aging trends and market value in the last three decades of the UEFA Champions League*. Frontiers in Psychology, 10, Article 76. https://doi.org/10.3389/fpsyg.2019.00076
+- Mead, J., O'Hare, A., and McMenemy, P. (2023). *Expected goals in football: Improving model performance and demonstrating value*. PLOS ONE, 18(4), Article e0282295. https://doi.org/10.1371/journal.pone.0282295
+- Mendez, A. (2024). *Predicting baseball players' value through machine learning: Traditional metrics vs advanced metrics*. ResearchGate. https://www.researchgate.net/publication/382249191
+- MLB. (2024). *Statcast glossary*. MLB.com. https://www.mlb.com/glossary/statcast
+- Poli, R., Ravenel, L., and Besson, R. (2023). *Inflation in the football players' transfer market 2013-14 to 2022-23 (Monthly Report No. 82)*. CIES Football Observatory. https://football-observatory.com/IMG/sites/mr/mr82/en/
+- Poli, R., Ravenel, L., and Besson, R. (2024). *Statistical modeling of football players' transfer fees worldwide*. International Journal of Financial Studies, 12(3), 93. https://doi.org/10.3390/ijfs12030093
+- Smith, K. J., Weaving, D., Jones, B., and Till, K. (2021). *How relative age effects associate with football players' market values: Indicators of losing talent and wasting money*. Frontiers in Sports and Active Living, 3, Article 694469. https://doi.org/10.3389/fspor.2021.694469
+- Society for American Baseball Research. (n.d.). *File and trial: Examining valuation and hearings in MLB arbitration*. SABR. https://sabr.org/journal/article/file-and-trial-examining-valuation-and-hearings-in-mlb-arbitration/
+- StatsBomb. (2024). *What are expected goals (xG)?* StatsBomb. https://statsbomb.com/soccer-metrics/expected-goals-xg-explained/
+- UEFA. (2019). *A competition full of promise*. UEFA. https://www.uefa.com/under21/news/0257-0dee6c3f2b20-faf3276d5fb0-1000--a-competition-full-of-promise/
+- UEFA. (2025a). *UEFA Under-21 EURO: The ultimate finishing school*. UEFA. https://www.uefa.com/under21/news/029a-1df9ce785fce-7e358cf94e33-1000--uefa-under-21-euro-the-ultimate-finishing-school/
+- UEFA. (2025b). *Regulations of the UEFA European Under-21 Championship 2023-25*. UEFA. https://documents.uefa.com/r/Regulations-of-the-UEFA-European-Under-21-Championship-2023-25-Online
+
+
+\clearpage
+# Appendix A. Detailed Model Metrics
+
+```{r appendix_a1}
+small_kable(model1_metrics, "Appendix A1. Model 1 Metrics")
+```
+
+```{r appendix_a2}
+small_kable(model2_metrics, "Appendix A2. Model 2 Metrics")
+```
+
+```{r appendix_a3}
+small_kable(model3_metrics, "Appendix A3. Model 3 Metrics")
+```
+
+```{r appendix_a4}
+small_kable(model4_metrics, "Appendix A4. Model 4 Metrics")
+```
+
+
+\clearpage
+
+# Appendix B. Selected Final-Model Outputs
+
+```{r appendix_b1}
+custom_kable(
+  top_overpriced,
+  "Appendix B1. Top Positive Residual Cases",
+  align_vec = c("p{3.0cm}", "l", "p{6.5cm}", "r", "r"),
+  font_size_num = 6
+)
+```
+
+```{r appendix_b2}
+custom_kable(
+  top_underpriced,
+  "Appendix B2. Top Negative Residual Cases",
+  align_vec = c("p{3.0cm}", "l", "p{6.5cm}", "r", "r"),
+  font_size_num = 6
+)
+```
+
+
+\clearpage
+
+# Appendix C. Feature-Importance Method Comparison
+
+```{r appendix_c1}
+small_kable(top_std, "Appendix C1. Absolute Standardized Coefficient Ranking")
+```
+
+```{r appendix_c2}
+small_kable(top_rf, "Appendix C2. Random Forest Permutation Ranking")
+```
+
+```{r appendix_c3}
+small_kable(top_xgb, "Appendix C3. XGBoost Permutation Ranking")
+```
