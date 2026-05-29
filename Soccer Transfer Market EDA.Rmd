@@ -1,0 +1,781 @@
+---
+title: "Soccer Transfer Market EDA"
+author: "Dowon Kim"
+date: "2026-04-06"
+output: html_document
+---
+
+## 패키지 로드 및 데이터 불러오기
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(ggrepel)
+library(patchwork)
+library(corrplot)
+
+clean_data <- read_csv("clean_data.csv")
+
+# -----------------------------------------------
+# 포지션 세분화 매핑 (sub_position → 6개 그룹)
+# -----------------------------------------------
+clean_data <- clean_data %>%
+  mutate(
+    pos_group = case_when(
+      sub_position == "Goalkeeper"                                  ~ "GK",
+      sub_position == "Centre-Back"                                 ~ "CB",
+      sub_position %in% c("Left-Back", "Right-Back")               ~ "SB",
+      sub_position %in% c("Central Midfield", "Defensive Midfield",
+                           "Right Midfield", "Left Midfield")       ~ "CM/DM",
+      sub_position %in% c("Attacking Midfield", "Second Striker")   ~ "AM",
+      sub_position %in% c("Centre-Forward", "Right Winger",
+                           "Left Winger")                           ~ "FW",
+      TRUE ~ "Other"
+    ),
+    pos_group = factor(pos_group,
+                       levels = c("FW","AM","CM/DM","SB","CB","GK")),
+    # npxG per 90 계산
+    npxG_per90 = npxG_Expected / Mins_Per_90_Playing
+  )
+
+# -----------------------------------------------
+# 리그 라벨
+# -----------------------------------------------
+league_labels <- c(
+  "GB1" = "EPL",
+  "ES1" = "La Liga",
+  "L1"  = "Bundesliga",
+  "IT1" = "Serie A",
+  "FR1" = "Ligue 1"
+)
+
+clean_data <- clean_data %>%
+  mutate(
+    to_league_label   = league_labels[to_league],
+    from_league_label = league_labels[from_league],
+    U21_label         = ifelse(U21_dummy == 1, "U21 (Youth)", "General"),
+    # [v5.0 신규] O30 라벨
+    O30_label         = ifelse(O30_dummy == 1, "O30 (Veteran)", "Under 30"),
+    league_diff_label = case_when(
+      league_level_diff ==  1 ~ "Lower to Higher",
+      league_level_diff ==  0 ~ "Same Level",
+      league_level_diff == -1 ~ "Higher to Lower",
+      TRUE ~ "Unknown"
+    )
+  )
+
+# 색상 팔레트
+pos_colors <- c(
+  "FW"    = "#e6550d",
+  "AM"    = "#fd8d3c",
+  "CM/DM" = "#3182bd",
+  "SB"    = "#74c476",
+  "CB"    = "#31a354",
+  "GK"    = "#756bb1"
+)
+
+league_colors <- c(
+  "EPL"        = "#e6550d",
+  "La Liga"    = "#3182bd",
+  "Bundesliga" = "#31a354",
+  "Serie A"    = "#756bb1",
+  "Ligue 1"    = "#fd8d3c"
+)
+```
+
+---
+
+## Graph 1. Key Variable Distributions
+
+```{r fig.width=14, fig.height=10, message=FALSE, warning=FALSE}
+p1a <- ggplot(clean_data, aes(x = transfer_fee_raw)) +
+  geom_histogram(bins = 50, fill = "#3182bd", color = "white", alpha = 0.85) +
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "Transfer Fee Distribution (Raw)",
+       subtitle = "Highly right-skewed — most transfers cluster at lower values",
+       x = "Transfer Fee (EUR)", y = "Count") +
+  theme_minimal(base_size = 11)
+
+p1b <- ggplot(clean_data, aes(x = log_transfer_fee)) +
+  geom_histogram(bins = 50, fill = "#e6550d", color = "white", alpha = 0.85) +
+  labs(title = "Transfer Fee Distribution (Log Transformed)",
+       subtitle = "Approximately normal after log transformation",
+       x = "log(Transfer Fee)", y = "Count") +
+  theme_minimal(base_size = 11)
+
+p1c <- ggplot(clean_data %>% filter(pos_group != "GK"),
+              aes(x = xG_Per)) +
+  geom_histogram(bins = 40, fill = "#756bb1", color = "white", alpha = 0.85) +
+  labs(title = "xG per 90 Distribution",
+       subtitle = "Outfield players only (GK excluded)",
+       x = "xG per 90", y = "Count") +
+  theme_minimal(base_size = 11)
+
+p1d <- ggplot(clean_data %>% filter(pos_group != "GK"),
+              aes(x = npxG_per90)) +
+  geom_histogram(bins = 40, fill = "#31a354", color = "white", alpha = 0.85) +
+  labs(title = "npxG per 90 Distribution",
+       subtitle = "Non-penalty xG — removes penalty bias",
+       x = "npxG per 90", y = "Count") +
+  theme_minimal(base_size = 11)
+
+(p1a + p1b) / (p1c + p1d)
+```
+
+---
+
+## Graph 2. xG per 90 vs log(Transfer Fee) by Position
+
+```{r fig.width=11, fig.height=7, message=FALSE, warning=FALSE}
+ggplot(
+  clean_data %>% filter(pos_group != "GK"),
+  aes(x = xG_Per, y = log_transfer_fee,
+      color = pos_group, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(aes(group = pos_group), method = "lm",
+              se = FALSE, linewidth = 1.1, show.legend = FALSE) +
+  scale_color_manual(values = pos_colors) +
+  scale_size_continuous(range = c(1, 4), name = "Age") +
+  labs(
+    title    = "xG per 90 vs log(Transfer Fee) by Position",
+    subtitle = "Goalkeepers excluded — xG not applicable for GK",
+    x        = "xG per 90",
+    y        = "log(Transfer Fee)",
+    color    = "Position Group"
+  ) +
+  theme_minimal(base_size = 12) +
+  guides(size  = guide_legend(order = 2),
+         color = guide_legend(order = 1))
+```
+
+---
+
+## Graph 3. Transfer Fee Distribution by Position (Sub-position)
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+ggplot(clean_data,
+       aes(x = pos_group, y = log_transfer_fee, fill = pos_group)) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25, outlier.size = 1) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 3, color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = pos_colors) +
+  labs(
+    title    = "Transfer Fee Distribution by Position Group",
+    subtitle = "Diamond = Mean  |  Line = Median  |  FW/AM command highest premiums",
+    x        = "Position Group",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+---
+
+## Graph 4. Transfer Fee Distribution by League
+
+```{r fig.width=11, fig.height=6, message=FALSE, warning=FALSE}
+ggplot(clean_data,
+       aes(x = reorder(to_league_label, log_transfer_fee, median),
+           y = log_transfer_fee,
+           fill = to_league_label)) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25, outlier.size = 1) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 3, color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = league_colors) +
+  labs(
+    title    = "Transfer Fee Distribution by League",
+    subtitle = "EPL commands significantly higher fees — sorted by median",
+    x        = "League",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+---
+
+## Graph 5. League Difficulty (UEFA Coefficient) vs Transfer Fee
+
+```{r fig.width=13, fig.height=6, message=FALSE, warning=FALSE}
+p5a <- ggplot(clean_data %>% filter(!is.na(from_league_label)),
+              aes(x = UEFA_coeff_from, y = log_transfer_fee,
+                  color = from_league_label)) +
+  geom_point(alpha = 0.35, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE,
+              color = "black", linewidth = 1.2, linetype = "dashed") +
+  scale_color_manual(values = league_colors) +
+  labs(
+    title    = "Origin League UEFA Coefficient vs log(Transfer Fee)",
+    subtitle = "Does playing in a stronger league command higher fees?",
+    x        = "UEFA Coefficient (Origin League)",
+    y        = "log(Transfer Fee)",
+    color    = "Origin League"
+  ) +
+  theme_minimal(base_size = 11)
+
+p5b <- ggplot(clean_data,
+              aes(x = factor(league_diff_label,
+                             levels = c("Lower to Higher",
+                                        "Same Level",
+                                        "Higher to Lower")),
+                  y = log_transfer_fee,
+                  fill = factor(league_diff_label,
+                                levels = c("Lower to Higher",
+                                           "Same Level",
+                                           "Higher to Lower")))) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25) +
+  scale_fill_manual(values = c("Lower to Higher" = "#e6550d",
+                                "Same Level"       = "#3182bd",
+                                "Higher to Lower"  = "#31a354")) +
+  labs(
+    title    = "Transfer Fee by League Movement Direction",
+    subtitle = "Moving to a higher-level league commands a premium?",
+    x        = "Transfer Direction",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+
+p5a + p5b
+```
+
+---
+
+## Graph 6. U21 Youth Premium
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+p6a <- ggplot(clean_data,
+              aes(x = U21_label, y = log_transfer_fee, fill = U21_label)) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 3, color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = c("U21 (Youth)" = "#e6550d",
+                                "General"     = "#3182bd")) +
+  labs(
+    title    = "Transfer Fee: U21 Youth vs General Players",
+    subtitle = paste0("U21 n=", sum(clean_data$U21_dummy == 1),
+                      "  |  General n=", sum(clean_data$U21_dummy == 0)),
+    x        = "Player Type",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+
+p6b <- ggplot(clean_data,
+              aes(x = U21_label, y = log_transfer_fee, fill = U21_label)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.15, fill = "white", alpha = 0.8) +
+  scale_fill_manual(values = c("U21 (Youth)" = "#e6550d",
+                                "General"     = "#3182bd")) +
+  labs(
+    title    = "Transfer Fee Distribution: U21 vs General (Violin)",
+    subtitle = "Violin shows full distribution shape",
+    x        = "Player Type",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+
+p6a + p6b
+```
+
+---
+
+## Graph 7. COVID Season Impact
+
+```{r fig.width=11, fig.height=6, message=FALSE, warning=FALSE}
+season_avg <- clean_data %>%
+  group_by(transfer_season, covid_dummy) %>%
+  summarise(
+    avg_fee    = mean(transfer_fee_raw, na.rm = TRUE),
+    median_fee = median(transfer_fee_raw, na.rm = TRUE),
+    n          = n(),
+    .groups    = "drop"
+  )
+
+ggplot(season_avg,
+       aes(x = transfer_season, y = avg_fee / 1e6,
+           fill = factor(covid_dummy))) +
+  geom_col(alpha = 0.85, width = 0.7) +
+  geom_text(aes(label = paste0("n=", n)),
+            vjust = -0.5, size = 3.2, fontface = "bold") +
+  geom_hline(yintercept = mean(season_avg$avg_fee) / 1e6,
+             linetype = "dashed", color = "gray40", linewidth = 0.8) +
+  scale_fill_manual(values = c("0" = "#3182bd", "1" = "#e6550d"),
+                    labels = c("0" = "Normal Season",
+                               "1" = "COVID Season")) +
+  labs(
+    title    = "Average Transfer Fee by Season — COVID Impact",
+    subtitle = "Red = COVID seasons  |  Dashed line = overall average",
+    x        = "Season",
+    y        = "Average Fee (Million EUR)",
+    fill     = "Season Type"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+---
+
+## Graph 8. Age vs log(Transfer Fee) — Quadratic Fit + U21/O30 Cutoff Lines
+### [v5.0 수정] 만 21세(U21 기준), 만 30세(O30 기준) 수직 기준선 추가
+
+```{r fig.width=13, fig.height=6, message=FALSE, warning=FALSE}
+# 피크 나이 계산 (전체 데이터 2차 회귀에서 꼭짓점 계산)
+lm_age <- lm(log_transfer_fee ~ age_at_transfer + age_squared,
+             data = clean_data)
+peak_age <- -coef(lm_age)[2] / (2 * coef(lm_age)[3])
+
+p8a <- ggplot(clean_data,
+              aes(x = age_at_transfer, y = log_transfer_fee)) +
+  geom_point(alpha = 0.20, size = 1.3, color = "#7f8c8d") +
+  geom_smooth(method = "lm",
+              formula = y ~ x + I(x^2),
+              color   = "#2980b9",
+              linewidth = 1.3,
+              se = TRUE,
+              fill = "#aed6f1",
+              alpha = 0.25) +
+  # [v5.0] U21 수직 기준선
+  geom_vline(xintercept = 21,
+             color    = "#27ae60",
+             linetype = "dashed",
+             linewidth = 0.9) +
+  # [v5.0] O30 수직 기준선
+  geom_vline(xintercept = 30,
+             color    = "#e74c3c",
+             linetype = "dashed",
+             linewidth = 0.9) +
+  annotate("text",
+           x = 21.4,
+           y = max(clean_data$log_transfer_fee, na.rm = TRUE) * 0.97,
+           label = "Age 21\n(U21 cutoff)",
+           color = "#27ae60", hjust = 0, size = 3.2, fontface = "bold") +
+  annotate("text",
+           x = 30.4,
+           y = max(clean_data$log_transfer_fee, na.rm = TRUE) * 0.97,
+           label = "Age 30\n(O30 cutoff)",
+           color = "#e74c3c", hjust = 0, size = 3.2, fontface = "bold") +
+  annotate("text",
+           x = round(peak_age, 1), y = 1.2,
+           label = paste0("Peak ~Age ", round(peak_age, 1)),
+           color = "#2c3e50", size = 3.0, fontface = "italic") +
+  labs(
+    title    = "Age vs log(Transfer Fee) — Quadratic Fit with U21 and O30 Thresholds",
+    subtitle = "Green dashed = U21 dummy cutoff (age 21)  |  Red dashed = O30 dummy cutoff (age 30)",
+    x        = "Age at Transfer (completed years)",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11)
+
+p8b <- ggplot(clean_data %>% filter(pos_group != "Other"),
+              aes(x = age_at_transfer, y = log_transfer_fee,
+                  color = pos_group)) +
+  geom_smooth(method = "lm",
+              formula = y ~ x + I(x^2),
+              se = FALSE, linewidth = 1.1) +
+  geom_vline(xintercept = 21, color = "#27ae60",
+             linetype = "dashed", linewidth = 0.7) +
+  geom_vline(xintercept = 30, color = "#e74c3c",
+             linetype = "dashed", linewidth = 0.7) +
+  scale_color_manual(values = pos_colors) +
+  labs(
+    title    = "Age vs log(Transfer Fee) by Position — Peak Value Age",
+    subtitle = "Each position shows different peak transfer value age",
+    x        = "Age at Transfer",
+    y        = "log(Transfer Fee)",
+    color    = "Position Group"
+  ) +
+  theme_minimal(base_size = 11)
+
+p8a + p8b
+```
+
+---
+
+## Graph 9. Correlation Matrix
+
+```{r fig.width=11, fig.height=11, message=FALSE, warning=FALSE}
+corr_vars <- clean_data %>%
+  select(
+    log_transfer_fee,
+    age_at_transfer,
+    contract_years_remaining,
+    UEFA_coeff_from,
+    xG_Per, xAG_Per, `npxG+xAG_Per`,
+    Gls_per90, Ast_per90,
+    PrgC_per90, Succ_Take_per90,
+    Tkl_per90, Won_percent_Aerial
+  ) %>%
+  drop_na()
+
+corr_matrix <- cor(corr_vars)
+
+corrplot(corr_matrix,
+         method      = "color",
+         type        = "upper",
+         tl.cex      = 0.85,
+         tl.col      = "black",
+         addCoef.col = "black",
+         number.cex  = 0.65,
+         col         = colorRampPalette(
+           c("#e6550d", "white", "#3182bd"))(200),
+         title       = "Correlation Matrix — Key Variables",
+         mar         = c(0, 0, 2, 0))
+```
+
+---
+
+## Graph 10. Position-Specific Key Metrics vs log(Transfer Fee)
+
+```{r fig.width=14, fig.height=10, message=FALSE, warning=FALSE}
+p_fw <- ggplot(
+  clean_data %>% filter(pos_group == "FW"),
+  aes(x = `npxG+xAG_Per`, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#e6550d") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "FW: npxG+xAG per 90 vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "FW"),
+                         " | non-penalty xG + xA"),
+       x = "npxG+xAG per 90", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+p_am <- ggplot(
+  clean_data %>% filter(pos_group == "AM"),
+  aes(x = xAG_Per, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#fd8d3c") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "AM: xAG per 90 vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "AM"),
+                         " | expected assists"),
+       x = "xAG per 90", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+p_cm <- ggplot(
+  clean_data %>% filter(pos_group == "CM/DM"),
+  aes(x = Cmp_percent_Total, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#3182bd") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "CM/DM: Pass Completion% vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "CM/DM"),
+                         " | passing accuracy"),
+       x = "Pass Completion%", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+p_cb <- ggplot(
+  clean_data %>% filter(pos_group == "CB"),
+  aes(x = Won_percent_Aerial, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#31a354") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "CB: Aerial Duels Won% vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "CB"),
+                         " | aerial dominance"),
+       x = "Aerial Duels Won%", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+p_sb <- ggplot(
+  clean_data %>% filter(pos_group == "SB"),
+  aes(x = PrgC_per90, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#74c476") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "SB: Progressive Carries per 90 vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "SB"),
+                         " | attacking contribution"),
+       x = "Progressive Carries per 90", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+p_gk <- ggplot(
+  clean_data %>% filter(pos_group == "GK", !is.na(PSxG)),
+  aes(x = PSxG, y = log_transfer_fee, size = age_at_transfer)
+) +
+  geom_point(alpha = 0.4, color = "#756bb1") +
+  geom_smooth(method = "lm", se = TRUE, color = "black", linewidth = 1) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  labs(title = "GK: PSxG vs log(Fee)",
+       subtitle = paste0("n=", sum(clean_data$pos_group == "GK" &
+                                    !is.na(clean_data$PSxG)),
+                         " | shot-quality-adjusted saves"),
+       x = "PSxG", y = "log(Transfer Fee)") +
+  theme_minimal(base_size = 10)
+
+(p_fw + p_am) / (p_cm + p_cb) / (p_sb + p_gk)
+```
+
+---
+
+## Graph 11. Position-Level Age Peak Analysis
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+ggplot(
+  clean_data %>% filter(pos_group != "Other"),
+  aes(x = age_at_transfer, y = log_transfer_fee,
+      color = pos_group, fill = pos_group)
+) +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2),
+              se = TRUE, alpha = 0.1, linewidth = 1.1) +
+  scale_color_manual(values = pos_colors) +
+  scale_fill_manual(values = pos_colors) +
+  labs(
+    title    = "Age vs log(Transfer Fee) by Position — Peak Value Age",
+    subtitle = "Each position shows different peak transfer value age",
+    x        = "Age at Transfer",
+    y        = "log(Transfer Fee)",
+    color    = "Position Group",
+    fill     = "Position Group"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+## Graph 12. Traditional vs Advanced Metrics — Position-Specific Comparison
+
+```{r fig.width=14, fig.height=6, message=FALSE, warning=FALSE}
+pos_metric_corr <- bind_rows(
+  clean_data %>% filter(pos_group == "FW") %>%
+    summarise(
+      pos_group   = "FW",
+      Traditional = cor(Gls_per90,      log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(`npxG+xAG_Per`, log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "Goals/90",
+      Adv_label   = "npxG+xAG/90"
+    ),
+  clean_data %>% filter(pos_group == "AM") %>%
+    summarise(
+      pos_group   = "AM",
+      Traditional = cor(Ast_per90, log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(xAG_Per,   log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "Assists/90",
+      Adv_label   = "xAG/90"
+    ),
+  clean_data %>% filter(pos_group == "CM/DM") %>%
+    summarise(
+      pos_group   = "CM/DM",
+      Traditional = cor(Ast_per90,        log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(Cmp_percent_Total, log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "Assists/90",
+      Adv_label   = "Pass Completion%"
+    ),
+  clean_data %>% filter(pos_group == "CB") %>%
+    summarise(
+      pos_group   = "CB",
+      Traditional = cor(Clr_per90,         log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(Won_percent_Aerial, log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "Clearances/90",
+      Adv_label   = "Aerial Duels Won%"
+    ),
+  clean_data %>% filter(pos_group == "SB") %>%
+    summarise(
+      pos_group   = "SB",
+      Traditional = cor(Ast_per90, log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(xAG_Per,   log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "Assists/90",
+      Adv_label   = "xAG/90"
+    ),
+  clean_data %>%
+    filter(pos_group == "GK", !is.na(PSxG), !is.na(GA90)) %>%
+    summarise(
+      pos_group   = "GK",
+      Traditional = cor(GA90, log_transfer_fee, use = "complete.obs"),
+      Advanced    = cor(PSxG, log_transfer_fee, use = "complete.obs"),
+      Trad_label  = "GA per 90",
+      Adv_label   = "PSxG"
+    )
+) %>%
+  pivot_longer(cols = c(Traditional, Advanced),
+               names_to  = "metric_type",
+               values_to = "correlation")
+
+ggplot(pos_metric_corr,
+       aes(x = metric_type, y = correlation, fill = metric_type)) +
+  geom_col(alpha = 0.85, width = 0.6) +
+  geom_hline(yintercept = 0, linewidth = 0.5, color = "gray40") +
+  geom_text(
+    aes(label = round(correlation, 3),
+        vjust = ifelse(correlation >= 0, -0.4, 1.2)),
+    size = 3.2, fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("Traditional" = "#3182bd",
+                                "Advanced"    = "#e6550d")) +
+  facet_wrap(
+    ~pos_group, nrow = 2,
+    labeller = labeller(pos_group = c(
+      "FW"    = "FW\n(Goals vs npxG+xAG)",
+      "AM"    = "AM\n(Assists vs xAG)",
+      "CM/DM" = "CM/DM\n(Assists vs Pass%)",
+      "CB"    = "CB\n(Clearances vs Aerial%)",
+      "SB"    = "SB\n(Assists vs xAG)",
+      "GK"    = "GK\n(GA90 vs PSxG)"
+    ))
+  ) +
+  labs(
+    title    = "Traditional vs Advanced Metrics: Correlation with Transfer Fee",
+    subtitle = "Each position uses its own position-specific metric pair — Red bar higher = advanced metrics win",
+    x        = "Metric Type",
+    y        = "Correlation with log(Transfer Fee)",
+    fill     = "Metric Type"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "top",
+    strip.text      = element_text(face = "bold")
+  )
+```
+
+---
+
+## Graph 13. Age Group Transfer Fee Distribution: U21 / Prime / O30
+### [v5.0 신규] 연령 구간별 3-way 비교 — U21 프리미엄 + O30 할인 시각화
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+# 연령 구간 변수 생성
+clean_data <- clean_data %>%
+  mutate(
+    age_group = case_when(
+      age_at_transfer <= 21 ~ "U21\n(≤21)",
+      age_at_transfer >= 30 ~ "O30\n(≥30)",
+      TRUE                  ~ "Prime\n(22-29)"
+    ),
+    age_group = factor(age_group,
+                       levels = c("U21\n(≤21)", "Prime\n(22-29)", "O30\n(≥30)"))
+  )
+
+# 그룹별 통계 계산
+age_group_stats <- clean_data %>%
+  filter(!is.na(log_transfer_fee)) %>%
+  group_by(age_group) %>%
+  summarise(
+    n              = n(),
+    median_raw_fee = median(transfer_fee_raw, na.rm = TRUE),
+    median_log_fee = median(log_transfer_fee, na.rm = TRUE),
+    .groups        = "drop"
+  )
+
+ggplot(clean_data %>% filter(!is.na(log_transfer_fee)),
+       aes(x = age_group, y = log_transfer_fee, fill = age_group)) +
+  geom_boxplot(outlier.alpha = 0.3, outlier.size = 1.0,
+               width = 0.55, linewidth = 0.6) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 3.5, color = "black", show.legend = FALSE) +
+  geom_text(data = age_group_stats,
+            aes(x     = age_group,
+                y     = median_log_fee,
+                label = paste0("Median\n€",
+                               round(median_raw_fee / 1e6, 1),
+                               "M\nn=", n)),
+            vjust = -1.2, size = 3.2, fontface = "bold",
+            inherit.aes = FALSE) +
+  scale_fill_manual(values = c(
+    "U21\n(≤21)"     = "#a8e6cf",
+    "Prime\n(22-29)" = "#74b9ff",
+    "O30\n(≥30)"     = "#ff7675"
+  )) +
+  labs(
+    title    = "Transfer Fee Distribution by Age Group: U21, Prime, and O30 Segments",
+    subtitle = "Three-way comparison — U21 premium and O30 discount as distinct market pricing tiers\nDiamond = Mean  |  Line = Median",
+    x        = "Age Group",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(size = 10, color = "#555555"),
+    legend.position = "none"
+  )
+```
+
+---
+
+## Graph 14. O30 Players vs Full Sample Transfer Fee Distribution
+### [v5.0 신규] O30 선수 vs 전체 이적료 분포 비교 — G6(U21)과 대칭 구조
+
+```{r fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+# 박스플롯 비교 (G6 U21과 동일 구조)
+p14a <- ggplot(clean_data,
+               aes(x = O30_label, y = log_transfer_fee, fill = O30_label)) +
+  geom_boxplot(alpha = 0.85, outlier.alpha = 0.25) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 3, color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = c("O30 (Veteran)" = "#e74c3c",
+                                "Under 30"      = "#3182bd")) +
+  labs(
+    title    = "Transfer Fee: O30 Veteran vs Under-30 Players",
+    subtitle = paste0("O30 n=", sum(clean_data$O30_dummy == 1, na.rm = TRUE),
+                      "  |  Under 30 n=",
+                      sum(clean_data$O30_dummy == 0, na.rm = TRUE)),
+    x        = "Player Type",
+    y        = "log(Transfer Fee)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+
+# 밀도 곡선 + 오버레이 (전체 샘플 vs O30)
+full_density <- clean_data %>%
+  filter(!is.na(log_transfer_fee)) %>%
+  mutate(group = "Full Sample")
+
+o30_density <- clean_data %>%
+  filter(!is.na(log_transfer_fee), O30_dummy == 1) %>%
+  mutate(group = "O30 Players")
+
+density_combined <- bind_rows(full_density, o30_density)
+
+p14b <- ggplot(density_combined,
+               aes(x = log_transfer_fee, fill = group, color = group)) +
+  geom_density(alpha = 0.40, linewidth = 1.0) +
+  scale_fill_manual(values  = c("Full Sample"  = "#3182bd",
+                                 "O30 Players" = "#e74c3c")) +
+  scale_color_manual(values = c("Full Sample"  = "#2c6fad",
+                                 "O30 Players" = "#c0392b")) +
+  geom_vline(
+    xintercept = median(clean_data$log_transfer_fee[
+      clean_data$O30_dummy == 1], na.rm = TRUE),
+    color = "#c0392b", linetype = "dashed", linewidth = 0.9
+  ) +
+  geom_vline(
+    xintercept = median(clean_data$log_transfer_fee, na.rm = TRUE),
+    color = "#2c6fad", linetype = "dashed", linewidth = 0.9
+  ) +
+  annotate("text",
+           x = median(clean_data$log_transfer_fee[
+             clean_data$O30_dummy == 1], na.rm = TRUE) - 0.15,
+           y = 0.35,
+           label = paste0("O30\nMedian\n€",
+                          round(median(clean_data$transfer_fee_raw[
+                            clean_data$O30_dummy == 1], na.rm = TRUE) / 1e6, 1),
+                          "M"),
+           color = "#c0392b", size = 3.0, hjust = 1, fontface = "bold") +
+  annotate("text",
+           x = median(clean_data$log_transfer_fee, na.rm = TRUE) + 0.15,
+           y = 0.35,
+           label = paste0("Full\nMedian\n€",
+                          round(median(clean_data$transfer_fee_raw,
+                                       na.rm = TRUE) / 1e6, 1),
+                          "M"),
+           color = "#2c6fad", size = 3.0, hjust = 0, fontface = "bold") +
+  labs(
+    title    = "Transfer Fee Density: O30 Players vs Full Sample",
+    subtitle = "Red = O30 veterans  |  Blue = Full dataset  |  Dashed lines = respective medians",
+    x        = "log(Transfer Fee)",
+    y        = "Density",
+    fill     = "Group",
+    color    = "Group"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top")
+
+p14a + p14b
+```
